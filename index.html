@@ -1,725 +1,96 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>ZO ARENA - Ranked Match & Perk Equipment</title>
-  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; touch-action: manipulation; }
-    body { width: 100vw; height: 100vh; overflow: hidden; background: #030305; font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; }
-    canvas { display: block; box-shadow: 0 0 60px rgba(0, 242, 254, 0.12); border-radius: 12px; }
+// server.js - Updated Node.js Multiplayer Game Server for ZO Arena
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: "*", methods: ["GET", "POST"] }
+});
+
+const rooms = {};
+
+io.on('connection', (socket) => {
+  console.log(`Fighter connected: ${socket.id}`);
+
+  // Join or create a multiplayer arena room
+  socket.on('join_room', ({ roomCode, username, formatIdx, modeIdx }) => {
+    socket.join(roomCode);
+    if (!rooms[roomCode]) {
+      rooms[roomCode] = {
+        players: [],
+        formatIdx: formatIdx || 1,
+        modeIdx: modeIdx || 0,
+        gameStarted: false
+      };
+    }
+
+    const room = rooms[roomCode];
+    const playerIndex = room.players.length;
     
-    #ui { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; display: flex; flex-direction: column; justify-content: space-between; padding: 20px 30px; }
-    .hud-top { display: flex; justify-content: center; gap: 8px; width: 100%; max-width: 1150px; margin: 0 auto; flex-wrap: wrap; }
-    .health-card { background: rgba(10, 10, 18, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.08); padding: 8px 12px; border-radius: 10px; box-shadow: 0 8px 25px rgba(0,0,0,0.6); min-width: 120px; flex: 1; max-width: 150px; }
-    
-    .fighter-name { color: #fff; font-weight: 800; font-size: 0.72rem; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 4px; display: flex; justify-content: space-between; align-items: center; }
-    .bar-bg { width: 100%; height: 8px; background: rgba(255, 255, 255, 0.08); border-radius: 6px; overflow: hidden; }
-    .bar-fill { height: 100%; width: 100%; transition: width 0.2s ease-out; }
-
-    .vs-badge { position: absolute; top: 75px; left: 50%; transform: translateX(-50%); text-align: center; display: flex; flex-direction: column; align-items: center; gap: 4px; }
-    #room-display { color: #00f2fe; font-size: 0.85rem; letter-spacing: 3px; font-weight: 800; text-shadow: 0 0 10px rgba(0,242,254,0.5); }
-    
-    #timer-display { background: rgba(10, 10, 18, 0.85); border: 1px solid rgba(0, 242, 254, 0.6); color: #00f2fe; padding: 4px 16px; border-radius: 12px; font-size: 1.3rem; font-weight: 900; letter-spacing: 3px; font-family: monospace; box-shadow: 0 0 20px rgba(0, 242, 254, 0.25); backdrop-filter: blur(10px); }
-
-    .hud-btn-group { position: absolute; top: 20px; right: 30px; display: flex; gap: 10px; pointer-events: auto; z-index: 15; }
-    .hud-settings-btn { background: rgba(10, 10, 18, 0.85); border: 1px solid #ffb703; color: #ffb703; padding: 8px 16px; border-radius: 20px; font-weight: 800; font-size: 0.78rem; letter-spacing: 2px; cursor: pointer; transition: all 0.3s; backdrop-filter: blur(10px); }
-    .hud-settings-btn:hover { background: #ffb703; color: #000; box-shadow: 0 0 20px rgba(255, 183, 3, 0.6); transform: scale(1.05); }
-
-    #touch-controls { position: absolute; bottom: 30px; left: 0; width: 100%; display: none; justify-content: space-between; padding: 0 40px; pointer-events: auto; z-index: 10; }
-    .touch-btn { width: 60px; height: 60px; border-radius: 50%; background: rgba(0, 242, 254, 0.15); border: 1px solid #00f2fe; color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 15px rgba(0,242,254,0.3); transition: transform 0.1s; }
-    .touch-btn:active { background: #00f2fe; color: #000; transform: scale(0.92); }
-
-    .screen-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 20; background: rgba(3, 3, 6, 0.94); backdrop-filter: blur(16px); display: flex; flex-direction: column; justify-content: center; align-items: center; opacity: 1; transition: opacity 0.5s ease; overflow: hidden; }
-    
-    #intro-screen { z-index: 50; background: #020204; overflow: hidden; }
-    #intro-stars-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; }
-    
-    .intro-title-wrapper { position: relative; text-align: center; margin-bottom: 25px; z-index: 3; }
-    .intro-title {
-      font-size: 3.8rem; font-weight: 900; letter-spacing: 12px; text-transform: uppercase;
-      background: linear-gradient(90deg, #00f2fe, #a855f7, #ff0844, #00f2fe);
-      background-size: 300% 100%;
-      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-      opacity: 0; transform: scale(3.5);
-      animation: closeInTitle 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards 0.2s, titleGlowPulse 4s linear infinite 1.4s;
-    }
-
-    .title-aura-ring {
-      position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) scale(0.5);
-      width: 110%; height: 140%; border-radius: 50%;
-      background: radial-gradient(circle, rgba(0,242,254,0.35) 0%, rgba(168,85,247,0.25) 45%, rgba(0,0,0,0) 70%);
-      filter: blur(25px); opacity: 0; pointer-events: none;
-      animation: auraIgnite 1.4s ease-out forwards 1.1s, auraPulse 2.5s ease-in-out infinite alternate 2.5s;
-    }
-
-    .auth-box {
-      position: relative; z-index: 3; background: rgba(12, 12, 22, 0.9);
-      border: 1px solid rgba(0, 242, 254, 0.4); border-radius: 16px; padding: 20px 24px; width: 360px;
-      display: flex; flex-direction: column; gap: 12px; box-shadow: 0 0 35px rgba(0, 242, 254, 0.15);
-      backdrop-filter: blur(12px); opacity: 0; transform: translateY(25px);
-      animation: startButtonAppear 0.8s ease forwards 1.6s;
-    }
-
-    .auth-input-group { display: flex; flex-direction: column; gap: 4px; width: 100%; }
-    .auth-label { color: #00f2fe; font-size: 0.68rem; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; }
-    .auth-input { width: 100%; height: 38px; padding: 0 12px; background: rgba(0, 0, 0, 0.6); border: 1px solid rgba(255, 255, 255, 0.15); border-radius: 8px; color: #fff; font-size: 0.85rem; font-weight: 700; letter-spacing: 1px; outline: none; transition: all 0.25s; }
-    .auth-input:focus { border-color: #00f2fe; box-shadow: 0 0 10px rgba(0, 242, 254, 0.3); background: rgba(0, 0, 0, 0.85); }
-    .auth-error-msg { color: #ff0844; font-size: 0.7rem; font-weight: 800; text-align: center; min-height: 14px; letter-spacing: 1px; }
-
-    .start-game-btn {
-      position: relative; width: 100%; padding: 12px; font-size: 0.95rem; font-weight: 900; letter-spacing: 3px; text-transform: uppercase;
-      color: #00f2fe; background: rgba(0, 242, 254, 0.1); border: 1px solid #00f2fe; border-radius: 10px; cursor: pointer;
-      box-shadow: 0 0 20px rgba(0, 242, 254, 0.25); transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-    }
-    .start-game-btn:hover { background: #00f2fe; color: #000; box-shadow: 0 0 35px rgba(0, 242, 254, 0.7); transform: scale(1.03); }
-
-    @keyframes closeInTitle {
-      0% { opacity: 0; transform: scale(3.5); filter: blur(12px); }
-      100% { opacity: 1; transform: scale(1); filter: blur(0px); }
-    }
-    @keyframes auraIgnite {
-      0% { opacity: 0; transform: translate(-50%, -50%) scale(0.4); }
-      100% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
-    }
-    @keyframes auraPulse {
-      0% { opacity: 0.7; transform: translate(-50%, -50%) scale(0.95); filter: blur(20px); }
-      100% { opacity: 1; transform: translate(-50%, -50%) scale(1.15); filter: blur(35px); }
-    }
-    @keyframes startButtonAppear {
-      0% { opacity: 0; transform: translateY(25px); }
-      100% { opacity: 1; transform: translateY(0); }
-    }
-    @keyframes titleGlowPulse { 0% { background-position: 0% 50%; } 100% { background-position: 300% 50%; } }
-
-    .logo-header-row { display: flex; align-items: center; justify-content: center; gap: 10px; }
-    .game-logo { font-size: 2.5rem; text-transform: uppercase; font-weight: 900; letter-spacing: 6px; background: linear-gradient(90deg, #00f2fe, #a855f7, #ff0844, #00f2fe); background-size: 300% 100%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: titleGlowPulse 6s linear infinite; }
-    .title-info-btn { width: 28px; height: 28px; border-radius: 50%; background: rgba(0, 242, 254, 0.08); border: 1px solid rgba(0, 242, 254, 0.4); color: #00f2fe; font-size: 0.82rem; font-weight: 800; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.25s; flex-shrink: 0; margin-top: -2px; }
-    .title-info-btn:hover { background: #00f2fe; color: #000; box-shadow: 0 0 12px rgba(0, 242, 254, 0.6); transform: scale(1.1); }
-
-    .creator-credit { color: #888; font-size: 0.68rem; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 2px; }
-    .ushio-aura { display: inline-block; font-weight: 900; letter-spacing: 2.5px; background: linear-gradient(135deg, #00f2fe, #a855f7, #38bdf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: ushioAura 3s ease-in-out infinite alternate; padding: 0 2px; }
-
-    @keyframes ushioAura {
-      0% { text-shadow: 0 0 6px rgba(0, 242, 254, 0.6); transform: scale(1); }
-      50% { text-shadow: 0 0 10px rgba(168, 85, 247, 0.9); transform: scale(1.03); }
-      100% { text-shadow: 0 0 8px rgba(56, 189, 248, 0.8); transform: scale(1); }
-    }
-
-    .ushiodevs-creator-badge {
-      position: relative; background: linear-gradient(135deg, rgba(0,242,254,0.15), rgba(168,85,247,0.25));
-      border: 2px solid; border-image: linear-gradient(90deg, #00f2fe, #a855f7, #ff0844, #ffb703, #00f2fe) 1;
-      padding: 12px 16px; border-radius: 8px; text-align: center; overflow: hidden; box-shadow: 0 0 25px rgba(168, 85, 247, 0.35);
-    }
-    .ushiodevs-title-glow { font-size: 0.88rem; font-weight: 900; letter-spacing: 3px; text-transform: uppercase; background: linear-gradient(90deg, #00f2fe, #a855f7, #ff0844, #ffb703, #00f2fe); background-size: 300% 100%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: titleGlowPulse 3s linear infinite; margin-bottom: 3px; }
-    .ushiodevs-sub-glow { color: #ddd; font-size: 0.68rem; letter-spacing: 1.5px; font-weight: 700; text-transform: uppercase; }
-
-    .subtitle { color: #555; font-size: 0.65rem; margin-bottom: 8px; letter-spacing: 3px; text-transform: uppercase; font-weight: 700; }
-    .wallet-badge { background: rgba(255, 183, 3, 0.1); border: 1px solid #ffb703; color: #ffb703; padding: 6px 16px; border-radius: 20px; font-size: 0.82rem; font-weight: 900; letter-spacing: 2px; display: flex; align-items: center; gap: 6px; box-shadow: 0 0 15px rgba(255, 183, 3, 0.2); margin-bottom: 8px; }
-
-    .lobby-box { 
-      position: relative; z-index: 2; background: rgba(12, 12, 20, 0.88); border: 1px solid rgba(0, 242, 254, 0.3); border-radius: 18px; padding: 14px 20px; width: 420px; max-height: 90vh; display: flex; flex-direction: column; align-items: center; gap: 7px; box-shadow: 0 0 40px rgba(0, 0, 0, 0.8); backdrop-filter: blur(14px); overflow: hidden; opacity: 0; transform: scale(0.6) translateY(40px); transition: transform 0.3s ease;
-    }
-    .lobby-box.pop-active { animation: lobbyPopOut 0.65s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
-
-    @keyframes lobbyPopOut {
-      0% { opacity: 0; transform: scale(0.5) translateY(50px); filter: blur(10px); }
-      70% { opacity: 1; transform: scale(1.04) translateY(-5px); filter: blur(0px); }
-      100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0px); }
-    }
-
-    .server-card { width: 100%; background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(0, 242, 254, 0.2); border-radius: 10px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
-    .server-card-header { display: flex; justify-content: space-between; align-items: center; }
-    .server-card-title { color: #888; font-size: 0.6rem; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; display: flex; align-items: center; gap: 5px; }
-    .server-status-dot { width: 5px; height: 5px; border-radius: 50%; background: #00f2fe; box-shadow: 0 0 6px #00f2fe; }
-
-    .server-input-row { display: flex; gap: 6px; align-items: center; width: 100%; }
-    .mini-code-input { flex: 1; height: 32px; padding: 0 10px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(10, 10, 18, 0.9); color: #00f2fe; font-size: 0.8rem; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; outline: none; width: 100%; }
-    .mini-code-input:focus { border-color: #00f2fe; background: rgba(0,0,0,0.8); }
-
-    .mini-server-btn { height: 32px; padding: 0 12px; font-size: 0.68rem; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; color: #fff; background: rgba(0, 242, 254, 0.1); border: 1px solid #00f2fe; border-radius: 6px; cursor: pointer; transition: all 0.25s; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
-    .mini-server-btn:hover { background: #00f2fe; color: #000; box-shadow: 0 0 12px rgba(0, 242, 254, 0.5); }
-    .mini-server-btn.join { border-color: #a855f7; color: #a855f7; background: rgba(168, 85, 247, 0.1); }
-    .mini-server-btn.join:hover { background: #a855f7; color: #fff; box-shadow: 0 0 12px rgba(168, 85, 247, 0.5); }
-
-    .carousel-wrapper { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-    .carousel-nav-btn { background: rgba(0, 242, 254, 0.08); border: 1px solid rgba(0, 242, 254, 0.4); color: #fff; width: 28px; height: 28px; border-radius: 50%; font-size: 0.75rem; font-weight: bold; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: all 0.2s; flex-shrink: 0; }
-    .carousel-nav-btn:hover { background: #00f2fe; color: #000; }
-
-    .card-display { flex: 1; background: rgba(0,0,0,0.5); border: 1px solid rgba(0, 242, 254, 0.18); border-radius: 8px; padding: 6px 8px; text-align: center; min-height: 48px; display: flex; flex-direction: column; justify-content: center; }
-    .card-title { color: #00f2fe; font-size: 0.85rem; font-weight: 900; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 1px; }
-    .card-desc { color: #aaa; font-size: 0.68rem; line-height: 1.1; }
-
-    .section-label { color: #666; font-size: 0.6rem; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; align-self: flex-start; margin-left: 2px; }
-
-    .action-btn { position: relative; width: 100%; padding: 8px; font-size: 0.78rem; font-weight: 800; text-transform: uppercase; letter-spacing: 2px; color: #fff; background: rgba(0, 242, 254, 0.05); border: 1px solid #00f2fe; border-radius: 16px; cursor: pointer; overflow: hidden; transition: all 0.3s; }
-    .action-btn:hover { background: #00f2fe; color: #000; box-shadow: 0 0 15px rgba(0, 242, 254, 0.5); }
-
-    .settings-btn { border-color: #ffb703; color: #ffb703; background: rgba(255, 183, 3, 0.05); margin-top: 2px; }
-    .profile-btn { border-color: #a855f7; color: #a855f7; background: rgba(168, 85, 247, 0.08); font-weight: 900; }
-    .profile-btn:hover { background: #a855f7; color: #fff; box-shadow: 0 0 15px rgba(168, 85, 247, 0.6); }
-
-    .shop-btn { border-color: #ffb703; color: #ffb703; background: rgba(255, 183, 3, 0.1); font-weight: 900; }
-    .exit-lobby-settings-btn { border-color: #ff0844; color: #ff0844; background: rgba(255, 8, 68, 0.08); margin-top: 4px; display: none; }
-
-    @keyframes modalPopIn {
-      0% { opacity: 0; transform: scale(0.6) translateY(30px); filter: blur(8px); }
-      70% { opacity: 1; transform: scale(1.03) translateY(-4px); filter: blur(0px); }
-      100% { opacity: 1; transform: scale(1) translateY(0); filter: blur(0px); }
-    }
-
-    .shop-box-animate, .settings-box-animate, .profile-box-animate, .titles-box-animate { animation: modalPopIn 0.55s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
-
-    #shop-screen { display: none; z-index: 38; }
-    .shop-box { background: rgba(10, 10, 18, 0.95); border: 1px solid #ffb703; padding: 22px 26px; border-radius: 18px; box-shadow: 0 0 40px rgba(255, 183, 3, 0.25); width: 560px; max-height: 88vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-    .shop-header-title { color: #ffb703; font-size: 1.2rem; font-weight: 900; letter-spacing: 2.5px; text-transform: uppercase; text-align: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
-    
-    .shop-tabs { display: flex; gap: 8px; width: 100%; margin-bottom: -2px; }
-    .shop-tab-btn { flex: 1; padding: 6px; font-size: 0.72rem; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.1); color: #888; border-radius: 6px; cursor: pointer; transition: all 0.2s; }
-    .shop-tab-btn.active { background: rgba(255, 183, 3, 0.15); border-color: #ffb703; color: #ffb703; }
-
-    .perk-grid { display: flex; flex-direction: column; gap: 8px; max-height: 44vh; overflow-y: auto; padding-right: 4px; }
-    .perk-card { background: rgba(0,0,0,0.6); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; gap: 10px; transition: all 0.25s; }
-    .perk-meta { display: flex; flex-direction: column; gap: 2px; flex: 1; }
-    .perk-title { color: #fff; font-size: 0.82rem; font-weight: 900; letter-spacing: 1px; display: flex; align-items: center; gap: 6px; }
-    .perk-desc { color: #aaa; font-size: 0.68rem; line-height: 1.2; }
-    
-    .perk-action-group { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
-    .perk-buy-btn, .perk-equip-btn { padding: 6px 12px; font-size: 0.7rem; font-weight: 800; border-radius: 6px; cursor: pointer; transition: all 0.2s; text-align: center; }
-    .perk-buy-btn { background: rgba(255, 183, 3, 0.1); border: 1px solid #ffb703; color: #ffb703; }
-    .perk-equip-btn { background: rgba(0, 242, 254, 0.1); border: 1px solid #00f2fe; color: #00f2fe; }
-    .perk-equip-btn.equipped { background: #00f2fe; color: #000; border-color: #00f2fe; }
-
-    #profile-screen { display: none; z-index: 42; }
-    .profile-box { background: rgba(10, 10, 18, 0.95); border: 1px solid #a855f7; padding: 24px 28px; border-radius: 18px; box-shadow: 0 0 40px rgba(168, 85, 247, 0.25); width: 440px; display: flex; flex-direction: column; gap: 14px; }
-    .profile-header-title { color: #a855f7; font-size: 1.3rem; font-weight: 900; letter-spacing: 2.5px; text-transform: uppercase; text-align: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 8px; }
-    .profile-avatar-container { display: flex; flex-direction: column; align-items: center; gap: 6px; }
-    .profile-avatar-circle { width: 70px; height: 70px; border-radius: 50%; background: linear-gradient(135deg, rgba(0,242,254,0.2), rgba(168,85,247,0.3)); border: 2px solid #a855f7; display: flex; align-items: center; justify-content: center; font-size: 2rem; box-shadow: 0 0 20px rgba(168, 85, 247, 0.35); }
-    .profile-username-tag { color: #fff; font-size: 1.1rem; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; }
-    .profile-equipped-title-badge { background: rgba(0, 242, 254, 0.12); border: 1px solid #00f2fe; color: #00f2fe; padding: 2px 10px; border-radius: 12px; font-size: 0.68rem; font-weight: 800; letter-spacing: 1.5px; text-transform: uppercase; margin-top: 2px; }
-
-    .profile-stats-card { background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(168, 85, 247, 0.2); border-radius: 10px; padding: 12px 16px; display: flex; flex-direction: column; gap: 8px; }
-    .profile-stat-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.78rem; color: #ccc; }
-    .profile-stat-value { font-weight: 800; color: #00f2fe; }
-
-    #titles-screen { display: none; z-index: 45; }
-    .titles-box { background: rgba(10, 10, 18, 0.95); border: 1px solid #00f2fe; padding: 22px 26px; border-radius: 18px; box-shadow: 0 0 40px rgba(0, 242, 254, 0.25); width: 480px; max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-    .titles-header-title { color: #00f2fe; font-size: 1.2rem; font-weight: 900; letter-spacing: 2.5px; text-transform: uppercase; text-align: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 6px; }
-    .titles-grid { display: flex; flex-direction: column; gap: 8px; max-height: 48vh; overflow-y: auto; padding-right: 4px; }
-    .title-card { background: rgba(0,0,0,0.6); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; gap: 10px; }
-
-    #info-screen { display: none; z-index: 40; }
-    .info-box { background: rgba(10, 10, 18, 0.95); border: 1px solid #00f2fe; padding: 22px 26px; border-radius: 18px; box-shadow: 0 0 40px rgba(0, 242, 254, 0.2); width: 480px; max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
-    .info-header-title { color: #00f2fe; font-size: 1.3rem; font-weight: 900; letter-spacing: 2.5px; text-transform: uppercase; text-align: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 6px; }
-    .logic-section { background: rgba(0,0,0,0.5); border-left: 3px solid #00f2fe; padding: 8px 12px; border-radius: 6px; }
-    .logic-title { color: #fff; font-size: 0.8rem; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 3px; }
-    .logic-desc { color: #aaa; font-size: 0.72rem; line-height: 1.35; }
-
-    #char-select-screen { display: none; z-index: 25; padding: 20px; }
-    #char-timer-display { background: rgba(255, 8, 68, 0.12); border: 1px solid #ff0844; color: #ff0844; padding: 4px 18px; border-radius: 20px; font-size: 1.05rem; font-weight: 900; letter-spacing: 2px; margin-bottom: 8px; font-family: monospace; box-shadow: 0 0 15px rgba(255, 8, 68, 0.25); }
-    .player-turn-badge { color: #00f2fe; font-size: 0.85rem; font-weight: 800; letter-spacing: 3px; text-transform: uppercase; margin-bottom: 12px; }
-    .select-container { display: flex; gap: 20px; max-width: 950px; width: 100%; align-items: stretch; }
-
-    .char-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; flex: 1.2; }
-    .char-card { background: rgba(12, 12, 20, 0.9); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px; padding: 16px 12px; text-align: center; cursor: pointer; transition: all 0.3s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-    .char-card:hover, .char-card.selected { border-color: #00f2fe; background: rgba(0, 242, 254, 0.08); box-shadow: 0 0 20px rgba(0, 242, 254, 0.35); transform: translateY(-3px); }
-    .char-card.ushthedevs-card { border-color: #a855f7; background: rgba(168, 85, 247, 0.12); }
-    
-    .char-avatar { font-size: 2.3rem; margin-bottom: 6px; }
-    .char-name { color: #fff; font-size: 0.95rem; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 2px; }
-    .char-role { color: #00f2fe; font-size: 0.7rem; font-weight: 800; letter-spacing: 1px; }
-
-    .char-info-panel { flex: 1; background: rgba(12, 12, 20, 0.92); border: 1px solid rgba(0, 242, 254, 0.25); border-radius: 14px; padding: 20px; display: flex; flex-direction: column; justify-content: space-between; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5); backdrop-filter: blur(10px); }
-    .info-header { border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 10px; margin-bottom: 10px; }
-    .info-title { color: #00f2fe; font-size: 1.25rem; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; }
-    .info-sub { color: #666; font-size: 0.72rem; letter-spacing: 1px; text-transform: uppercase; margin-top: 2px; }
-
-    .stat-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 0.75rem; color: #ccc; }
-    .stat-bar-bg { width: 120px; height: 7px; background: rgba(255,255,255,0.08); border-radius: 4px; overflow: hidden; }
-    .stat-bar-fill { height: 100%; background: #00f2fe; border-radius: 4px; }
-
-    .ability-box { background: rgba(0, 0, 0, 0.4); border-left: 3px solid #a855f7; padding: 10px 12px; border-radius: 4px; margin-top: 10px; }
-    .ability-title { color: #a855f7; font-size: 0.75rem; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 4px; }
-    .ability-desc { color: #aaa; font-size: 0.7rem; line-height: 1.3; }
-
-    #settings-screen { display: none; z-index: 35; }
-    .settings-box { background: rgba(10, 10, 18, 0.95); border: 1px solid #ffb703; padding: 20px 24px; border-radius: 18px; box-shadow: 0 0 40px rgba(255, 183, 3, 0.2); width: 440px; max-height: 90vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
-    .settings-title { color: #ffb703; font-size: 1.3rem; font-weight: 900; letter-spacing: 3px; text-transform: uppercase; text-align: center; margin-bottom: 2px; }
-    
-    .keybind-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
-    .keybind-label { color: #ccc; font-size: 0.75rem; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
-    .keybind-btn { background: rgba(0,0,0,0.6); border: 1px solid #ffb703; color: #ffb703; padding: 4px 12px; border-radius: 6px; font-weight: 800; font-size: 0.75rem; cursor: pointer; min-width: 80px; text-align: center; }
-
-    .audio-card-box { background: rgba(0, 0, 0, 0.5); border: 1px solid rgba(255, 183, 3, 0.25); border-radius: 10px; padding: 8px 12px; margin-bottom: 2px; display: flex; flex-direction: column; gap: 6px; }
-    .music-select-dropdown { width: 100%; height: 32px; background: rgba(10, 10, 18, 0.9); border: 1px solid #ffb703; color: #ffb703; border-radius: 6px; padding: 0 10px; font-size: 0.75rem; font-weight: 800; letter-spacing: 1px; outline: none; cursor: pointer; }
-    .music-select-dropdown option { background: #0a0a12; color: #ffb703; }
-
-    .volume-slider-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 2px; }
-    .volume-range-input { flex: 1; accent-color: #ffb703; cursor: pointer; height: 6px; border-radius: 3px; }
-    .volume-val-badge { color: #ffb703; font-weight: 800; font-size: 0.75rem; width: 45px; text-align: right; font-family: monospace; }
-
-    #victory-screen { display: none; z-index: 30; background: rgba(3, 3, 6, 0.88); }
-    .victory-box { text-align: center; background: rgba(10, 10, 18, 0.95); border: 1px solid #00f2fe; padding: 32px 40px; border-radius: 18px; box-shadow: 0 0 40px rgba(0, 242, 254, 0.25); width: 380px; }
-    .winner-title { font-size: 2.1rem; font-weight: 900; text-transform: uppercase; letter-spacing: 3.5px; margin-bottom: 6px; background: linear-gradient(90deg, #00f2fe, #ff0844); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
-    .winner-subtitle { color: #aaa; font-size: 0.85rem; letter-spacing: 1.5px; margin-bottom: 14px; }
-    .coins-earned-badge { background: rgba(255, 183, 3, 0.12); border: 1px solid #ffb703; color: #ffb703; padding: 8px; border-radius: 10px; font-weight: 900; font-size: 0.9rem; letter-spacing: 2px; margin-bottom: 16px; box-shadow: 0 0 15px rgba(255, 183, 3, 0.25); }
-  </style>
-</head>
-<body>
-  <canvas id="gameCanvas"></canvas>
-
-  <div id="ui">
-    <div class="hud-btn-group">
-      <button type="button" class="hud-settings-btn" id="hud-settings-btn" onclick="openSettings(true)">⚙️ SETTINGS</button>
-    </div>
-    
-    <div class="hud-top" id="hud-container"></div>
-    <div class="vs-badge">
-      <div id="timer-display">03:00</div>
-      <div id="room-display">CODE: ----</div>
-    </div>
-
-    <!-- Mobile Controls -->
-    <div id="touch-controls">
-      <div style="display:grid; grid-template-columns: repeat(3, 45px); gap: 5px;">
-        <div></div><div class="touch-btn" style="width:45px;height:45px" id="btn-up">▲</div><div></div>
-        <div class="touch-btn" style="width:45px;height:45px" id="btn-left">◄</div><div></div><div class="touch-btn" style="width:45px;height:45px" id="btn-right">►</div>
-        <div></div><div class="touch-btn" style="width:45px;height:45px" id="btn-down">▼</div><div></div>
-      </div>
-      <div style="display:flex; gap:10px;">
-        <div class="touch-btn" id="btn-dash" style="border-color:#a855f7; width:60px; height:60px;">DASH</div>
-        <div class="touch-btn" id="btn-atk" style="border-color:#ff0844; width:60px; height:60px;">ATK</div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Opening Cinematic Intro Overlay with Login System -->
-  <div id="intro-screen" class="screen-overlay">
-    <canvas id="intro-stars-canvas"></canvas>
-    <div class="intro-title-wrapper">
-      <div class="title-aura-ring"></div>
-      <h1 class="intro-title">ZO ARENA</h1>
-    </div>
-
-    <div class="auth-box">
-      <div class="auth-input-group">
-        <label class="auth-label">👤 Username</label>
-        <input type="text" id="auth-username" class="auth-input" placeholder="Enter username..." maxlength="20" autocomplete="off">
-      </div>
-      <div class="auth-input-group">
-        <label class="auth-label">🔑 Password</label>
-        <input type="password" id="auth-password" class="auth-input" placeholder="Enter password..." maxlength="30">
-      </div>
-      <div id="auth-error-msg" class="auth-error-msg"></div>
-      <button type="button" class="start-game-btn" onclick="handleAuthAndEnterLobby()">LOGIN & ENTER LOBBY</button>
-    </div>
-  </div>
-
-  <!-- Profile Modal Screen -->
-  <div id="profile-screen" class="screen-overlay">
-    <div id="profile-box-container" class="profile-box">
-      <div class="profile-header-title">👤 PLAYER PROFILE</div>
-      
-      <div class="profile-avatar-container">
-        <div class="profile-avatar-circle">⚡</div>
-        <div id="profile-username-tag" class="profile-username-tag">PLAYER</div>
-        <div id="profile-equipped-title-badge" class="profile-equipped-title-badge">🏆 ROOKIE CONTENDER</div>
-      </div>
-
-      <div class="profile-stats-card">
-        <div class="profile-stat-row">
-          <span>Competitive Rank:</span>
-          <span id="profile-stat-rank" class="profile-stat-value" style="color:#ffb703;">🥉 Bronze I (0 RP)</span>
-        </div>
-        <div class="profile-stat-row">
-          <span>ZO Coin Balance:</span>
-          <span id="profile-stat-coins" class="profile-stat-value">🪙 100</span>
-        </div>
-        <div class="profile-stat-row">
-          <span>Equipped Perk:</span>
-          <span id="profile-stat-perk" class="profile-stat-value">Juggernaut Plating</span>
-        </div>
-      </div>
-
-      <button type="button" class="action-btn" style="border-color:#00f2fe; color:#00f2fe; background:rgba(0, 242, 254, 0.05);" onclick="openTitlesModal()">🎖️ SELECT ACHIEVEMENTS TITLE</button>
-      <button type="button" class="action-btn" style="border-color:#a855f7; color:#a855f7; background:rgba(168, 85, 247, 0.05);" onclick="closeProfileModal()">BACK TO LOBBY</button>
-    </div>
-  </div>
-
-  <!-- Title Selection Modal Screen -->
-  <div id="titles-screen" class="screen-overlay">
-    <div id="titles-box-container" class="titles-box">
-      <div class="titles-header-title">🎖️ ACHIEVEMENT TITLES</div>
-      <div class="titles-grid" id="titles-grid-container"></div>
-      <button type="button" class="action-btn" style="border-color:#00f2fe; color:#00f2fe;" onclick="closeTitlesModal()">BACK TO PROFILE</button>
-    </div>
-  </div>
-
-  <!-- Perk & Shop Modal -->
-  <div id="shop-screen" class="screen-overlay">
-    <div id="shop-box-container" class="shop-box">
-      <div class="shop-header-title">
-        <span>🪙 ZO COIN SHOP & UPGRADES</span>
-        <span id="shop-coin-balance" style="color:#ffb703; font-size: 0.95rem;">🪙 0 COINS</span>
-      </div>
-      <div class="shop-tabs">
-        <button type="button" id="tab-btn-perks" class="shop-tab-btn active" onclick="switchShopTab('perks')">Equip Perks</button>
-        <button type="button" id="tab-btn-upgrades" class="shop-tab-btn" onclick="switchShopTab('upgrades')">Stat Upgrades</button>
-      </div>
-      <div class="perk-grid" id="perk-grid-container"></div>
-      <button type="button" class="action-btn" style="border-color:#ffb703; color:#ffb703;" onclick="closeShopModal()">BACK TO LOBBY</button>
-    </div>
-  </div>
-
-  <!-- Game Info Modal Screen -->
-  <div id="info-screen" class="screen-overlay">
-    <div class="info-box">
-      <div class="info-header-title">ℹ️ GAME LOGIC & RULES</div>
-      <div class="ushiodevs-creator-badge">
-        <div class="ushiodevs-title-glow">✨ SOLE CREATOR: USHIODEVS ✨</div>
-        <div class="ushiodevs-sub-glow">1-of-1 Meteorite & Developer</div>
-      </div>
-      <div class="logic-section">
-        <div class="logic-title">🏆 Ranked Match Mode</div>
-        <div class="logic-desc">Play online multiplayer to test your skills and climb divisions!</div>
-      </div>
-      <button type="button" class="action-btn" style="border-color:#00f2fe; color:#00f2fe;" onclick="closeGameInfo()">CLOSE RULES</button>
-    </div>
-  </div>
-
-  <!-- Settings Control Panel Modal -->
-  <div id="settings-screen" class="screen-overlay">
-    <div id="settings-box-container" class="settings-box">
-      <div class="settings-title">⚙️ CONTROLS & SETTINGS</div>
-      <div class="audio-card-box">
-        <span class="keybind-label" style="color:#ffb703;">🎵 ARENA THEME MUSIC</span>
-        <select id="theme-music-select" class="music-select-dropdown" onchange="changeThemeTrack(this.value)">
-          <option value="neon">🎵 Cyber Neon (Default)</option>
-          <option value="synthwave">🌆 Synthwave Pulse</option>
-          <option value="dark">🔥 Dark Electro</option>
-          <option value="chiptune">👾 Arcade Chiptune</option>
-          <option value="off">🔇 Audio Off</option>
-        </select>
-      </div>
-      <button type="button" class="action-btn settings-btn" onclick="saveAndCloseSettings()">RESUME / SAVE SETTINGS</button>
-      <button type="button" id="settings-leave-btn" class="action-btn exit-lobby-settings-btn" onclick="returnToLobby()">‹ LEAVE MATCH / BACK TO LOBBY</button>
-    </div>
-  </div>
-
-  <!-- Character Selection Screen -->
-  <div id="char-select-screen" class="screen-overlay">
-    <h1 class="game-logo">HERO SELECTION</h1>
-    <div id="char-timer-display">TIME REMAINING: 01:00</div>
-    <div class="player-turn-badge" id="player-turn-badge">SELECT YOUR HERO...</div>
-
-    <div class="select-container">
-      <div class="char-grid" id="char-grid-options"></div>
-      <div class="char-info-panel">
-        <div>
-          <div class="info-header">
-            <div class="info-title" id="info-hero-name">🗡️ KAGE</div>
-            <div class="info-sub" id="info-hero-role">CLASS: ASSASSIN</div>
-          </div>
-          <div class="stat-row">
-            <span>HEALTH (HP)</span>
-            <div class="stat-bar-bg"><div class="stat-bar-fill" id="bar-hp" style="width: 45%;"></div></div>
-          </div>
-          <div class="ability-box">
-            <div class="ability-title" id="ability-name">PASSIVE: SHADOW STEP</div>
-            <div class="ability-desc" id="ability-desc">Balanced high-speed mobility with precise strikes.</div>
-          </div>
-        </div>
-        <button type="button" class="action-btn" style="margin-top: 15px;" onclick="lockCurrentPlayerHero()">LOCK IN HERO</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Victory Screen -->
-  <div id="victory-screen" class="screen-overlay">
-    <div class="victory-box">
-      <div id="winner-title" class="winner-title">TEAM BLUE WINS!</div>
-      <div id="winner-subtitle" class="winner-subtitle">All enemy opponents eliminated.</div>
-      <div id="coins-earned-badge" class="coins-earned-badge">🪙 +50 ZO COINS EARNED!</div>
-      <button type="button" class="action-btn" onclick="returnToLobby()">BACK TO LOBBY</button>
-    </div>
-  </div>
-
-  <div id="lobby-screen" class="screen-overlay" style="display: flex;">
-    <div class="logo-header-row">
-      <h1 class="game-logo">ZO ARENA</h1>
-      <button type="button" class="title-info-btn" onclick="openGameInfo()">ℹ️</button>
-    </div>
-    
-    <div class="creator-credit">LOGGED IN AS <span id="lobby-username-display" class="ushio-aura">PLAYER</span></div>
-    <p class="subtitle">Multiplayer Cyber Arena</p>
-
-    <div class="wallet-badge" id="lobby-wallet-badge">🪙 ZO COINS: 100</div>
-
-    <div class="lobby-box" id="lobby-box">
-      <div class="server-card">
-        <div class="server-card-header">
-          <div class="server-card-title"><div class="server-status-dot"></div> MULTIPLAYER ROOM CODE</div>
-        </div>
-        <div class="server-input-row">
-          <input type="text" id="host-code-input" class="mini-code-input" value="ARENA1" maxlength="10" placeholder="ROOM CODE">
-          <button type="button" class="mini-server-btn" onclick="connectToServer('host')">HOST</button>
-          <button type="button" class="mini-server-btn join" onclick="connectToServer('join')">JOIN</button>
-        </div>
-      </div>
-
-      <div class="section-label">Select Match Format</div>
-      <div class="carousel-wrapper">
-        <button type="button" class="carousel-nav-btn" onclick="prevFormat()">◄</button>
-        <div class="card-display" id="format-card">
-          <div class="card-title" id="format-title">2v2 Clash</div>
-          <div class="card-desc" id="format-desc">4 Players (2 Teams). Team Blue vs Team Red!</div>
-        </div>
-        <button type="button" class="carousel-nav-btn" onclick="nextFormat()">►</button>
-      </div>
-
-      <button type="button" class="action-btn profile-btn" onclick="openProfileModal()">👤 VIEW PLAYER PROFILE</button>
-      <button type="button" class="action-btn shop-btn" onclick="openShopModal()">🪙 ZO COIN SHOP & UPGRADES</button>
-      <button type="button" class="action-btn settings-btn" onclick="openSettings(false)">⚙️ SETTINGS</button>
-    </div>
-  </div>
-
-  <script>
-    const canvas = document.getElementById('gameCanvas');
-    const ctx = canvas.getContext('2d');
-    canvas.width = 1200; canvas.height = 800;
-
-    const CENTER_X = 600, CENTER_Y = 400, ARENA_RADIUS = 350;
-    let socket = null;
-    let myPlayerId = null;
-    let roomPlayers = [];
-    let keys = {};
-    let isGameActive = false;
-    let isGameOver = false;
-    let currentUsername = 'PLAYER';
-    let roomCode = 'ARENA1';
-
-    let zoCoins = parseInt(localStorage.getItem('zo_coins') ?? '100');
-    let totalWins = parseInt(localStorage.getItem('zo_total_wins') ?? '0');
-    let rankPoints = parseInt(localStorage.getItem('zo_rank_points') ?? '0');
-    let ownedPerks = JSON.parse(localStorage.getItem('zo_owned_perks')) || { 'juggernaut': true };
-    let equippedPerk = localStorage.getItem('zo_equipped_perk') || 'juggernaut';
-    let equippedTitle = localStorage.getItem('zo_equipped_title') || '🏆 ROOKIE CONTENDER';
-    let charUpgrades = JSON.parse(localStorage.getItem('zo_char_upgrades')) || { power: 0, regen: 0 };
-
-    let currentShopTab = 'perks';
-    let currentTrackKey = localStorage.getItem('zo_theme_track') || 'neon';
-    let deviceMode = localStorage.getItem('zo_device_mode') || 'auto';
-    let matchTimeRemaining = 180;
-
-    const FORMATS = [
-      { id: '1v1', name: '1v1 Duel', players: 2, isTeam: true },
-      { id: '2v2', name: '2v2 Clash', players: 4, isTeam: true }
-    ];
-    let formatIdx = 1;
-    let modeIdx = 0;
-    let highlightedClassIdx = 0;
-    let activeMapKey = 'neon';
-    let fighters = [];
-    let particles = [], floatingTexts = [];
-
-    const BASE_CLASSES = [
-      { id: 'assassin', name: '🗡️ Kage', role: 'ASSASSIN', baseHp: 100, speed: 340, dashSpeed: 620, critChance: 0.35, baseMinDmg: 2, baseMaxDmg: 4, knockback: 220, radius: 16 },
-      { id: 'tank', name: '🛡️ Titan', role: 'TANK', baseHp: 200, speed: 200, dashSpeed: 380, critChance: 0.1, baseMinDmg: 1, baseMaxDmg: 2, knockback: 150, radius: 24 },
-      { id: 'berserker', name: '⚔️ Valkyrie', role: 'BERSERKER', baseHp: 130, speed: 270, dashSpeed: 520, critChance: 0.15, baseMinDmg: 2, baseMaxDmg: 5, knockback: 320, radius: 18 },
-      { id: 'scout', name: '⚡ Spectre', role: 'SCOUT', baseHp: 110, speed: 380, dashSpeed: 700, critChance: 0.2, baseMinDmg: 1, baseMaxDmg: 3, knockback: 180, radius: 15 }
-    ];
-
-    const MAPS = {
-      neon: { name: "Neon Circuit", bgColor: "#030305", floorColor: "#10101a", wallColor: "#00f2fe", pillars: [{ x: CENTER_X - 150, y: CENTER_Y - 150, r: 35 }, { x: CENTER_X + 150, y: CENTER_Y - 150, r: 35 }] }
+    const player = {
+      id: socket.id,
+      playerIndex,
+      username: username || `Fighter ${playerIndex + 1}`,
+      heroIndex: null,
+      ready: false
     };
 
-    document.addEventListener('DOMContentLoaded', () => {
-      updateWalletUI();
-      applyDeviceModeVisibility();
+    room.players.push(player);
+
+    // Broadcast updated room state to all clients in the room
+    io.to(roomCode).emit('room_update', {
+      players: room.players,
+      formatIdx: room.formatIdx,
+      modeIdx: room.modeIdx
     });
+  });
 
-    function handleAuthAndEnterLobby() {
-      const usernameInput = document.getElementById('auth-username').value.trim();
-      if (!usernameInput) return;
-      currentUsername = usernameInput.toUpperCase();
-      document.getElementById('lobby-username-display').innerText = currentUsername;
-      document.getElementById('intro-screen').style.opacity = '0';
-      setTimeout(() => {
-        document.getElementById('intro-screen').style.display = 'none';
-        document.getElementById('lobby-screen').style.display = 'flex';
-      }, 500);
-    }
+  // Handle unique character selection and ready lock-in
+  socket.on('select_hero', ({ roomCode, heroIndex }) => {
+    const room = rooms[roomCode];
+    if (!room) return;
 
-    function updateWalletUI() {
-      localStorage.setItem('zo_coins', zoCoins.toString());
-      document.getElementById('lobby-wallet-badge').innerText = `🪙 ZO COINS: ${zoCoins}`;
-    }
+    // Check if hero is already taken by another player in the room
+    const isHeroTaken = room.players.some(p => p.id !== socket.id && p.heroIndex === heroIndex);
+    if (isHeroTaken) return; // Reject if already chosen
 
-    function applyDeviceModeVisibility() {
-      if (deviceMode === 'touch' || ('ontouchstart' in window)) {
-        document.getElementById('touch-controls').style.display = 'flex';
+    const player = room.players.find(p => p.id === socket.id);
+    if (player) {
+      player.heroIndex = heroIndex;
+      player.ready = true;
+      io.to(roomCode).emit('room_update', { players: room.players, formatIdx: room.formatIdx, modeIdx: room.modeIdx });
+
+      // Check if all players in the room are ready to start the match
+      if (room.players.length > 0 && room.players.every(p => p.ready) && !room.gameStarted) {
+        room.gameStarted = true;
+        io.to(roomCode).emit('start_match', { players: room.players });
       }
     }
+  });
 
-    // Connect to Node.js Socket.io Server & open character selection
-    function connectToServer(action) {
-      roomCode = document.getElementById('host-code-input').value.trim().toUpperCase() || 'ARENA1';
-      
-      // Connect to Socket.io backend (Change URL to your deployed server if remote)
-      socket = io();
+  // Real-time input synchronization
+  socket.on('player_input', ({ roomCode, inputData }) => {
+    socket.to(roomCode).emit('remote_player_input', { id: socket.id, inputData });
+  });
 
-      socket.on('connect', () => {
-        socket.emit('join_room', { roomCode, username: currentUsername, formatIdx, modeIdx });
-      });
-
-      socket.on('room_update', (data) => {
-        roomPlayers = data.players;
-        formatIdx = data.formatIdx;
-        modeIdx = data.modeIdx;
-      });
-
-      socket.on('start_match', (data) => {
-        roomPlayers = data.players;
-        document.getElementById('char-select-screen').style.display = 'none';
-        setupMultiplayerMatch();
-        isGameActive = true;
-      });
-
-      // Transition to Character Selection Screen upon clicking Host/Join
-      document.getElementById('lobby-screen').style.display = 'none';
-      document.getElementById('char-select-screen').style.display = 'flex';
-      buildCharacterGridUI();
-      highlightHero(0);
-    }
-
-    function buildCharacterGridUI() {
-      const gridContainer = document.getElementById('char-grid-options');
-      gridContainer.innerHTML = '';
-      BASE_CLASSES.forEach((cls, idx) => {
-        const card = document.createElement('div');
-        card.className = 'char-card';
-        card.onclick = () => highlightHero(idx);
-        card.innerHTML = `<div class="char-avatar">${idx === 0 ? '🗡️' : idx === 1 ? '🛡️' : idx === 2 ? '⚔️' : '⚡'}</div><div class="char-name">${cls.name}</div><div class="char-role">${cls.role}</div>`;
-        gridContainer.appendChild(card);
-      });
-    }
-
-    function highlightHero(idx) {
-      highlightedClassIdx = idx;
-      document.querySelectorAll('.char-card').forEach((c, i) => c.classList.toggle('selected', i === idx));
-      const hero = BASE_CLASSES[idx];
-      document.getElementById('info-hero-name').innerText = hero.name;
-      document.getElementById('bar-hp').style.width = (hero.baseHp / 200) * 100 + '%';
-    }
-
-    // Lock in hero and send selection to server
-    function lockCurrentPlayerHero() {
-      if (socket) {
-        socket.emit('select_hero', { roomCode, heroIndex: highlightedClassIdx });
-        document.getElementById('player-turn-badge').innerText = 'WAITING FOR OTHER PLAYERS...';
+  socket.on('disconnect', () => {
+    for (const roomCode in rooms) {
+      const room = rooms[roomCode];
+      const index = room.players.findIndex(p => p.id === socket.id);
+      if (index !== -1) {
+        room.players.splice(index, 1);
+        io.to(roomCode).emit('room_update', { players: room.players, formatIdx: room.formatIdx, modeIdx: room.modeIdx });
+        if (room.players.length === 0) delete rooms[roomCode];
+        break;
       }
     }
+    console.log(`Fighter disconnected: ${socket.id}`);
+  });
+});
 
-    function setupMultiplayerMatch() {
-      fighters = [];
-      roomPlayers.forEach((rp, i) => {
-        const angle = (i / roomPlayers.length) * Math.PI * 2;
-        const cls = BASE_CLASSES[rp.heroIndex] || BASE_CLASSES[0];
-        const team = (i % 2 === 0) ? 1 : 2;
-        const color = team === 1 ? '#00f2fe' : '#ff0844';
-
-        if (rp.id === socket.id) myPlayerId = i;
-
-        fighters.push({
-          id: i, socketId: rp.id, team, classObj: cls, nameStr: rp.username,
-          x: CENTER_X + Math.cos(angle) * 220, y: CENTER_Y + Math.sin(angle) * 220,
-          vx: 0, vy: 0, radius: cls.radius, angle: 0, hp: cls.baseHp, maxHp: cls.baseHp, color, slashTimer: 0, hitCooldown: 0
-        });
-      });
-
-      const hud = document.getElementById('hud-container');
-      hud.innerHTML = '';
-      fighters.forEach(p => {
-        const card = document.createElement('div');
-        card.className = 'health-card';
-        card.innerHTML = `<div class="fighter-name"><span>${p.nameStr}</span><span id="p${p.id + 1}-hp-num">${p.maxHp} HP</span></div><div class="bar-bg"><div id="p${p.id + 1}-health" class="bar-fill" style="background: ${p.color};"></div></div>`;
-        hud.appendChild(card);
-      });
-
-      document.getElementById('room-display').innerText = `ROOM: ${roomCode}`;
-    }
-
-    // Socket listeners for multiplayer input & sync
-    window.addEventListener('load', () => {
-      // Setup network event listeners when socket initializes
-    });
-
-    function returnToLobby() {
-      isGameActive = false;
-      if (socket) { socket.disconnect(); socket = null; }
-      document.getElementById('victory-screen').style.display = 'none';
-      document.getElementById('char-select-screen').style.display = 'none';
-      document.getElementById('lobby-screen').style.display = 'flex';
-    }
-
-    window.addEventListener('keydown', e => { keys[e.code] = true; });
-    window.addEventListener('keyup', e => { keys[e.code] = false; });
-
-    let lastTime = performance.now();
-    function gameLoop(now) {
-      const delta = (now - lastTime) / 1000;
-      lastTime = now;
-
-      if (isGameActive && !isGameOver) {
-        let dx = 0, dy = 0;
-        if (keys['KeyW'] || keys['ArrowUp']) dy -= 1;
-        if (keys['KeyS'] || keys['ArrowDown']) dy += 1;
-        if (keys['KeyA'] || keys['ArrowLeft']) dx -= 1;
-        if (keys['KeyD'] || keys['ArrowRight']) dx += 1;
-
-        const p = fighters[myPlayerId];
-        if (p && (dx !== 0 || dy !== 0)) {
-          p.vx = dx * p.classObj.speed;
-          p.vy = dy * p.classObj.speed;
-          if (socket) socket.emit('player_input', { roomCode, inputData: { x: p.x, y: p.y, vx: p.vx, vy: p.vy } });
-        }
-      }
-
-      // Render Arena
-      ctx.fillStyle = MAPS.neon.bgColor;
-      ctx.fillRect(0, 0, 1200, 800);
-      ctx.beginPath(); ctx.arc(CENTER_X, CENTER_Y, ARENA_RADIUS, 0, Math.PI * 2);
-      ctx.fillStyle = MAPS.neon.floorColor; ctx.fill(); ctx.strokeStyle = MAPS.neon.wallColor; ctx.lineWidth = 6; ctx.stroke();
-
-      fighters.forEach(p => {
-        p.x += p.vx * delta; p.y += p.vy * delta;
-        p.vx *= 0.8; p.vy *= 0.8;
-
-        ctx.save(); ctx.translate(p.x, p.y);
-        ctx.beginPath(); ctx.arc(0, 0, p.radius, 0, Math.PI * 2);
-        ctx.fillStyle = p.color; ctx.fill();
-        ctx.restore();
-
-        ctx.font = 'bold 11px Segoe UI'; ctx.fillStyle = '#fff'; ctx.textAlign = 'center';
-        ctx.fillText(p.nameStr, p.x, p.y + p.radius + 16);
-      });
-
-      requestAnimationFrame(gameLoop);
-    }
-    requestAnimationFrame(gameLoop);
-
-    function openSettings() { document.getElementById('settings-screen').style.display = 'flex'; }
-    function saveAndCloseSettings() { document.getElementById('settings-screen').style.display = 'none'; }
-    function openProfileModal() { document.getElementById('profile-screen').style.display = 'flex'; document.getElementById('lobby-screen').style.display = 'none'; }
-    function closeProfileModal() { document.getElementById('profile-screen').style.display = 'none'; document.getElementById('lobby-screen').style.display = 'flex'; }
-    function openShopModal() { document.getElementById('shop-screen').style.display = 'flex'; document.getElementById('lobby-screen').style.display = 'none'; }
-    function closeShopModal() { document.getElementById('shop-screen').style.display = 'none'; document.getElementById('lobby-screen').style.display = 'flex'; }
-    function openGameInfo() { document.getElementById('info-screen').style.display = 'flex'; }
-    function closeGameInfo() { document.getElementById('info-screen').style.display = 'none'; }
-    function switchShopTab(tab) { currentShopTab = tab; }
-    function prevFormat() { formatIdx = (formatIdx - 1 + FORMATS.length) % FORMATS.length; document.getElementById('format-title').innerText = FORMATS[formatIdx].name; }
-    function nextFormat() { formatIdx = (formatIdx + 1) % FORMATS.length; document.getElementById('format-title').innerText = FORMATS[formatIdx].name; }
-  </script>
-</body>
-</html>
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+  console.log(`ZO Arena Multiplayer Server running on port ${PORT}`);
+});
