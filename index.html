@@ -307,8 +307,11 @@
     .select-container { display: flex; gap: 20px; max-width: 950px; width: 100%; align-items: stretch; }
 
     .char-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; flex: 1.2; }
-    .char-card { background: rgba(12, 12, 20, 0.9); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px; padding: 16px 12px; text-align: center; cursor: pointer; transition: all 0.3s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+    .char-card { background: rgba(12, 12, 20, 0.9); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 14px; padding: 16px 12px; text-align: center; cursor: pointer; transition: all 0.3s ease; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; }
     .char-card:hover, .char-card.selected { border-color: #00f2fe; background: rgba(0, 242, 254, 0.08); box-shadow: 0 0 20px rgba(0, 242, 254, 0.35); transform: translateY(-3px); }
+    .char-card.taken { opacity: 0.35; pointer-events: none; border-color: #ff0844; background: rgba(255, 8, 68, 0.05); }
+    .char-card.taken::after { content: 'CHOSEN'; position: absolute; top: 10px; right: 10px; background: #ff0844; color: #fff; font-size: 0.55rem; font-weight: 900; padding: 2px 6px; border-radius: 4px; letter-spacing: 1px; }
+
     .char-card.ushthedevs-card { border-color: #a855f7; background: rgba(168, 85, 247, 0.12); }
     .char-card.ushthedevs-card:hover, .char-card.ushthedevs-card.selected { border-color: #00f2fe; box-shadow: 0 0 30px rgba(168, 85, 247, 0.6); }
 
@@ -571,7 +574,7 @@
   <div id="char-select-screen" class="screen-overlay">
     <h1 class="game-logo">HERO SELECTION</h1>
     <div id="char-timer-display">TIME REMAINING: 01:00</div>
-    <div class="player-turn-badge" id="player-turn-badge">PLAYER 1 SELECTING...</div>
+    <div class="player-turn-badge" id="player-turn-badge">CHOOSE 1 CHARACTER FOR YOUR DEVICE</div>
 
     <div class="select-container">
       <div class="char-grid" id="char-grid-options"></div>
@@ -606,7 +609,7 @@
           </div>
         </div>
 
-        <button type="button" class="action-btn" style="margin-top: 15px;" onclick="lockCurrentPlayerHero()">LOCK IN HERO</button>
+        <button type="button" class="action-btn" style="margin-top: 15px;" onclick="lockCurrentDeviceHero()">LOCK IN CHARACTER</button>
       </div>
     </div>
   </div>
@@ -783,7 +786,6 @@
       } else if (deviceMode === 'keyboard') {
         touchControls.style.display = 'none';
       } else {
-        // Auto mode
         if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
           touchControls.style.display = 'flex';
         } else {
@@ -1226,7 +1228,6 @@
 
     let charSelectTimer = 60;
     let charSelectInterval = null;
-    let pickingPlayerIdx = 0;
     let playerHeroChoices = [];
 
     let activeMapKey = 'neon';
@@ -1310,24 +1311,21 @@
       document.getElementById('char-select-screen').style.display = 'flex';
       
       buildCharacterGridUI();
-
-      const totalPlayers = isPracticeMode ? 1 : FORMATS[formatIdx].players;
-      playerHeroChoices = new Array(totalPlayers).fill(0);
-      pickingPlayerIdx = 0;
       highlightHero(0);
-      updatePlayerTurnBadge();
       startCharSelectTimer();
     }
 
-    function buildCharacterGridUI() {
+    function buildCharacterGridUI(takenIndices = []) {
       const gridContainer = document.getElementById('char-grid-options');
       gridContainer.innerHTML = '';
       const availableClasses = getAllAvailableClasses();
 
       availableClasses.forEach((cls, idx) => {
+        const isTaken = takenIndices.includes(idx);
         const card = document.createElement('div');
-        card.className = `char-card ${cls.id === 'ushiodevs' ? 'ushiodevs-card' : ''}`;
-        card.onclick = () => highlightHero(idx);
+        card.className = `char-card ${cls.id === 'ushiodevs' ? 'ushiodevs-card' : ''} ${isTaken ? 'taken' : ''}`;
+        card.id = `char-card-${idx}`;
+        if (!isTaken) card.onclick = () => highlightHero(idx);
         card.innerHTML = `
           <div class="char-avatar">${cls.id === 'ushiodevs' ? '👑' : (idx === 0 ? '🗡️' : idx === 1 ? '🛡️' : idx === 2 ? '⚔️' : '⚡')}</div>
           <div class="char-name">${cls.name}</div>
@@ -1346,7 +1344,7 @@
         updateCharTimerUI();
         if (charSelectTimer <= 0) {
           clearInterval(charSelectInterval);
-          lockCurrentPlayerHero();
+          lockCurrentDeviceHero();
         }
       }, 1000);
     }
@@ -1357,13 +1355,14 @@
       document.getElementById('char-timer-display').innerText = `TIME REMAINING: ${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
     }
 
-    function updatePlayerTurnBadge() {
-      document.getElementById('player-turn-badge').innerText = isPracticeMode ? `SELECT YOUR HERO` : `PLAYER ${pickingPlayerIdx + 1} SELECTING HERO...`;
-    }
-
     function highlightHero(idx) {
+      const card = document.getElementById(`char-card-${idx}`);
+      if (card && card.classList.contains('taken')) return;
+
       highlightedClassIdx = idx;
-      document.querySelectorAll('.char-card').forEach((c, i) => c.classList.toggle('selected', i === idx));
+      document.querySelectorAll('.char-card').forEach((c, i) => {
+        if (!c.classList.contains('taken')) c.classList.toggle('selected', i === idx);
+      });
       const availableClasses = getAllAvailableClasses();
       const hero = getEquippedPerkStats(availableClasses[idx]);
       
@@ -1377,23 +1376,21 @@
       document.getElementById('ability-desc').innerText = `${hero.abilityDesc} ${hero.id === 'ushiodevs' ? 'Exclusive 1-of-1 Sovereign Overlord.' : 'Equipped Perk & Upgrades active!'}`;
     }
 
-    function lockCurrentPlayerHero() {
-      playerHeroChoices[pickingPlayerIdx] = highlightedClassIdx;
-      pickingPlayerIdx++;
-      const totalPlayers = isPracticeMode ? 1 : FORMATS[formatIdx].players;
-      if (pickingPlayerIdx < totalPlayers) {
-        updatePlayerTurnBadge();
-        startCharSelectTimer();
+    function lockCurrentDeviceHero() {
+      clearInterval(charSelectInterval);
+      document.getElementById('char-select-screen').style.display = 'none';
+
+      const chosenHeroIdx = highlightedClassIdx;
+      if (isPracticeMode) {
+        let aiChoice = chosenHeroIdx === 0 ? 1 : 0;
+        playerHeroChoices = [chosenHeroIdx, aiChoice];
+        hostRoom();
       } else {
-        clearInterval(charSelectInterval);
-        document.getElementById('char-select-screen').style.display = 'none';
-        if (isPracticeMode) {
-          formatIdx = 0;
-          let aiChoice = 0;
-          playerHeroChoices = [highlightedClassIdx, aiChoice];
+        if (pendingLobbyAction === 'host') {
+          playerHeroChoices = [chosenHeroIdx];
           hostRoom();
         } else {
-          if (pendingLobbyAction === 'host') hostRoom(); else joinRoom();
+          joinRoom(chosenHeroIdx);
         }
       }
     }
@@ -1445,7 +1442,7 @@
           color = team === 1 ? '#00f2fe' : '#ff0844';
         }
 
-        const chosenClassIdx = playerHeroChoices[i] !== undefined ? playerHeroChoices[i] : 0;
+        const chosenClassIdx = playerHeroChoices[i] !== undefined ? playerHeroChoices[i] : (i % availableClasses.length);
         const chosenClassDef = availableClasses[chosenClassIdx] || BASE_CLASSES[0];
         
         let finalClassDef = chosenClassDef;
@@ -1561,11 +1558,28 @@
         const assignedId = playerConnections.length + 1;
         playerConnections.push(conn);
 
-        conn.on('open', () => conn.send({ type: 'ASSIGN_PLAYER', playerId: assignedId, mapKey: activeMapKey, formatIdx, modeIdx, playerHeroChoices }));
+        conn.on('open', () => {
+          conn.send({ 
+            type: 'REQUEST_CHARACTER_SELECTION', 
+            mapKey: activeMapKey, 
+            formatIdx, 
+            modeIdx, 
+            takenHeroIndices: playerHeroChoices 
+          });
+        });
+
         conn.on('data', (data) => {
-          if (data.type === 'PLAYER_INPUT') {
+          if (data.type === 'LOCK_CHARACTER') {
+            playerHeroChoices[assignedId] = data.heroIndex;
+            // Check if all slots in format are filled
+            const requiredPlayers = FORMATS[formatIdx].players;
+            if (playerHeroChoices.filter(x => x !== undefined).length >= requiredPlayers) {
+              setupMatchFighters();
+              playerConnections.forEach(c => c.send({ type: 'START_MATCH', playerHeroChoices, mapKey: activeMapKey }));
+            }
+          }
+          else if (data.type === 'PLAYER_INPUT') {
             applyPlayerInput(data.playerId, data.dx, data.dy, data.attack, data.dash);
-            // Broadcast state update to all other connected peers
             playerConnections.forEach(otherConn => {
               if (otherConn !== conn) {
                 otherConn.send({ type: 'STATE_SYNC', fighters: fighters.map(f => ({ id: f.id, x: f.x, y: f.y, vx: f.vx, vy: f.vy, hp: f.hp, slashTimer: f.slashTimer })) });
@@ -1577,7 +1591,7 @@
       });
     }
 
-    function joinRoom() {
+    function joinRoom(myChosenHeroIdx) {
       if (isGameActive) return;
       isPracticeMode = false;
       const code = document.getElementById('host-code-input').value.trim().toUpperCase();
@@ -1589,22 +1603,40 @@
       peer.on('open', () => {
         const conn = peer.connect('ZO-ARENA-FIXED-' + code);
 
+        conn.on('open', () => {
+          // Connected to host, wait for character selection request or send selection directly
+        });
+
         conn.on('data', (data) => {
-          if (data.type === 'ASSIGN_PLAYER') {
-            myPlayerId = data.playerId;
+          if (data.type === 'REQUEST_CHARACTER_SELECTION') {
             if (data.formatIdx !== undefined) formatIdx = data.formatIdx;
             if (data.modeIdx !== undefined) {
               modeIdx = data.modeIdx;
               isRankedMatch = (MODES[modeIdx].id === 'ranked');
             }
             if (data.mapKey) activeMapKey = data.mapKey;
-            if (data.playerHeroChoices) playerHeroChoices = data.playerHeroChoices;
+            if (data.takenHeroIndices) {
+              playerHeroChoices = data.takenHeroIndices;
+              buildCharacterGridUI(playerHeroChoices);
+            }
             
+            // Now send our locked character back to host
+            conn.send({ type: 'LOCK_CHARACTER', heroIndex: myChosenHeroIdx });
+          } 
+          else if (data.type === 'START_MATCH') {
+            if (data.playerHeroChoices) playerHeroChoices = data.playerHeroChoices;
+            if (data.mapKey) activeMapKey = data.mapKey;
             setupMatchFighters();
+            myPlayerId = playerHeroChoices.length > 1 ? 1 : 0; // Assigned based on order
             document.getElementById('room-display').innerText = `CONNECTED AS P${myPlayerId + 1}`;
             closeLobbyScreen();
-          } else if (data.type === 'STATE_SYNC') {
-            // Apply host state sync for remote clients
+
+            window.sendInput = (dx, dy, attack, dash) => {
+              if (myPlayerId !== null) conn.send({ type: 'PLAYER_INPUT', playerId: myPlayerId, dx, dy, attack, dash });
+            };
+            window.requestRematch = () => { conn.send({ type: 'TRIGGER_REMATCH' }); };
+          } 
+          else if (data.type === 'STATE_SYNC') {
             data.fighters.forEach(syncF => {
               const f = fighters.find(item => item.id === syncF.id);
               if (f && f.id !== myPlayerId) {
@@ -1619,14 +1651,9 @@
             activeMapKey = data.mapKey;
             if (data.playerHeroChoices) playerHeroChoices = data.playerHeroChoices;
             setupMatchFighters();
-            document.getElementById('room-display').innerText = `CONNECTED AS P${myPlayerId + 1}`;
+            closeLobbyScreen();
           }
         });
-
-        window.sendInput = (dx, dy, attack, dash) => {
-          if (myPlayerId !== null) conn.send({ type: 'PLAYER_INPUT', playerId: myPlayerId, dx, dy, attack, dash });
-        };
-        window.requestRematch = () => { conn.send({ type: 'TRIGGER_REMATCH' }); };
       });
     }
 
@@ -2004,3 +2031,4 @@
   </script>
 </body>
 </html>
+```[cite: 1]
