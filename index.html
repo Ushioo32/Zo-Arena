@@ -1563,7 +1563,15 @@
 
         conn.on('open', () => conn.send({ type: 'ASSIGN_PLAYER', playerId: assignedId, mapKey: activeMapKey, formatIdx, modeIdx, playerHeroChoices }));
         conn.on('data', (data) => {
-          if (data.type === 'PLAYER_INPUT') applyPlayerInput(data.playerId, data.dx, data.dy, data.attack, data.dash);
+          if (data.type === 'PLAYER_INPUT') {
+            applyPlayerInput(data.playerId, data.dx, data.dy, data.attack, data.dash);
+            // Broadcast state update to all other connected peers
+            playerConnections.forEach(otherConn => {
+              if (otherConn !== conn) {
+                otherConn.send({ type: 'STATE_SYNC', fighters: fighters.map(f => ({ id: f.id, x: f.x, y: f.y, vx: f.vx, vy: f.vy, hp: f.hp, slashTimer: f.slashTimer })) });
+              }
+            });
+          }
           else if (data.type === 'TRIGGER_REMATCH') resetRoundRematch();
         });
       });
@@ -1595,6 +1603,18 @@
             setupMatchFighters();
             document.getElementById('room-display').innerText = `CONNECTED AS P${myPlayerId + 1}`;
             closeLobbyScreen();
+          } else if (data.type === 'STATE_SYNC') {
+            // Apply host state sync for remote clients
+            data.fighters.forEach(syncF => {
+              const f = fighters.find(item => item.id === syncF.id);
+              if (f && f.id !== myPlayerId) {
+                f.x = syncF.x; f.y = syncF.y; f.vx = syncF.vx; f.vy = syncF.vy; f.hp = syncF.hp; f.slashTimer = syncF.slashTimer;
+                const hpBar = document.getElementById(`p${f.id + 1}-health`);
+                const hpNum = document.getElementById(`p${f.id + 1}-hp-num`);
+                if (hpBar) hpBar.style.width = ((f.hp / f.maxHp) * 100) + '%';
+                if (hpNum) hpNum.innerText = (Math.round(f.hp * 10) / 10) + ' HP';
+              }
+            });
           } else if (data.type === 'SYNC_REMATCH') {
             activeMapKey = data.mapKey;
             if (data.playerHeroChoices) playerHeroChoices = data.playerHeroChoices;
@@ -1778,7 +1798,6 @@
         updateWalletUI();
       } else {
         coinBadge.style.display = 'none';
-        // Fixed: Properly deducts RP when a ranked match is lost
         if (isRankedMatch && !isPracticeMode) {
           rankPoints = Math.max(0, rankPoints - 15);
           rankBadge.style.display = 'block';
@@ -1869,7 +1888,11 @@
         const isDash = keys[userControls.dash];
 
         if (dx !== 0 || dy !== 0 || isAtk || isDash) {
-          applyPlayerInput(0, dx, dy, isAtk, isDash);
+          if (myPlayerId !== null && window.sendInput) {
+            window.sendInput(dx, dy, isAtk, isDash);
+          } else {
+            applyPlayerInput(0, dx, dy, isAtk, isDash);
+          }
           keys[userControls.atk] = false; keys[userControls.dash] = false;
         }
 
